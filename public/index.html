@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Task Manager — Shashank Srivastava</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+
+  <header>
+    <div class="nav-left">
+      <div class="nav-logo">✦</div>
+      <h1>Task Manager</h1>
+    </div>
+    <div class="nav-right">
+      <span class="made-by">By <strong>Shashank Srivastava</strong></span>
+      <span id="api-status">Connecting...</span>
+    </div>
+  </header>
+
+  <div class="container">
+
+    <div class="stats">
+      <div class="stat-box">
+        <div class="num" id="stat-total">0</div>
+        <div class="lbl">Total Tasks</div>
+      </div>
+      <div class="stat-box">
+        <div class="num" id="stat-pending">0</div>
+        <div class="lbl">In Progress</div>
+      </div>
+      <div class="stat-box">
+        <div class="num" id="stat-done">0</div>
+        <div class="lbl">Completed</div>
+      </div>
+    </div>
+
+    <div class="card" id="progress-card" style="display:none;">
+      <h2>Completion Progress</h2>
+      <div class="progress-wrap">
+        <div class="progress-label">
+          <span id="progress-text">0 of 0 tasks done</span>
+          <span id="progress-pct">0%</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Add New Task</h2>
+      <div class="form-row">
+        <input type="text" id="input-title" placeholder="Task title *" autocomplete="off" />
+        <input type="text" id="input-desc" placeholder="Description (optional)" autocomplete="off" />
+        <button class="btn-primary" id="btn-add">+ Add Task</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h2>Tasks <span class="count-chip" id="task-count">0</span></h2>
+        <div class="filters">
+          <button class="filter-btn active" data-filter="all">All</button>
+          <button class="filter-btn" data-filter="pending">Pending</button>
+          <button class="filter-btn" data-filter="done">Done</button>
+        </div>
+      </div>
+      <div id="task-list">
+        <div class="empty">
+          <span class="empty-icon">🔄</span>
+          <p>Loading tasks...</p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>
+    Task Manager &nbsp;·&nbsp; Designed &amp; Built by <span>Shashank Srivastava</span>
+  </footer>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const API = 'http://localhost:3000';
+    let currentFilter = 'all';
+
+    const TASK_ICONS = ['📌', '📝', '🎯', '⚡', '🔧', '🚀', '💡', '📊', '🗂️', '✏️'];
+    function getTaskIcon(id) { return TASK_ICONS[id % TASK_ICONS.length]; }
+
+    function esc(str) {
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function relativeTime(iso) {
+      const diff = Date.now() - new Date(iso).getTime();
+      const mins = Math.floor(diff / 60000), hours = Math.floor(diff / 3600000), days = Math.floor(diff / 86400000);
+      if (mins < 1) return 'just now';
+      if (mins < 60) return mins + 'm ago';
+      if (hours < 24) return hours + 'h ago';
+      return days + 'd ago';
+    }
+
+    function renderTasks(tasks) {
+      const list = document.getElementById('task-list');
+      document.getElementById('task-count').textContent = tasks.length;
+      if (!tasks.length) {
+        const msgs = {
+          all: ['📋', 'No tasks yet', 'Add your first task above'],
+          pending: ['🎉', 'All clear!', 'No pending tasks'],
+          done: ['🗂️', 'Nothing done yet', 'Complete a task to see it here'],
+        };
+        const [icon, title, sub] = msgs[currentFilter];
+        list.innerHTML = '<div class="empty"><span class="empty-icon">' + icon + '</span><p>' + title + '</p><small>' + sub + '</small></div>';
+        return;
+      }
+      list.innerHTML = tasks.map((t, i) =>
+        '<div class="task-item ' + (t.status === 'done' ? 'done' : '') + '" id="task-' + t.id + '" style="animation-delay:' + i * 0.06 + 's">'
+        + '<div class="task-icon">' + (t.status === 'done' ? '✅' : getTaskIcon(t.id)) + '</div>'
+        + '<div class="task-body">'
+        + '<div class="task-title">' + esc(t.title) + '</div>'
+        + (t.description ? '<div class="task-desc">' + esc(t.description) + '</div>' : '')
+        + '<div class="task-meta"><span class="badge badge-' + t.status + '">' + t.status + '</span>'
+        + '<span class="task-meta-dot"></span><span>' + relativeTime(t.createdAt) + '</span></div>'
+        + '</div>'
+        + '<div class="task-actions">'
+        + (t.status === 'pending' ? '<button class="btn-done" onclick="markDone(' + t.id + ')">✓ Done</button>' : '')
+        + '<button class="btn-delete" onclick="deleteTask(' + t.id + ')">✕</button>'
+        + '</div></div>'
+      ).join('');
+    }
+
+    async function updateStats() {
+      try {
+        const res = await fetch(API + '/tasks');
+        const all = await res.json();
+        const pending = all.filter(t => t.status === 'pending').length;
+        const done = all.filter(t => t.status === 'done').length;
+        animCount('stat-total', all.length);
+        animCount('stat-pending', pending);
+        animCount('stat-done', done);
+        const card = document.getElementById('progress-card');
+        if (all.length > 0) {
+          card.style.display = '';
+          const pct = Math.round((done / all.length) * 100);
+          document.getElementById('progress-fill').style.width = pct + '%';
+          document.getElementById('progress-text').textContent = done + ' of ' + all.length + ' tasks done';
+          document.getElementById('progress-pct').textContent = pct + '%';
+        } else { card.style.display = 'none'; }
+        const s = document.getElementById('api-status');
+        s.textContent = 'Online'; s.className = 'online';
+      } catch (e) { }
+    }
+
+    function animCount(id, target) {
+      const el = document.getElementById(id);
+      const start = parseInt(el.textContent) || 0;
+      if (start === target) return;
+      const step = target > start ? 1 : -1; let cur = start;
+      const t = setInterval(() => { cur += step; el.textContent = cur; if (cur === target) clearInterval(t); }, 40);
+    }
+
+    async function fetchTasks() {
+      try {
+        const url = currentFilter === 'all' ? API + '/tasks' : API + '/tasks?status=' + currentFilter;
+        const tasks = await (await fetch(url)).json();
+        renderTasks(tasks); updateStats();
+      } catch {
+        showToast('Cannot connect to API', true);
+        const s = document.getElementById('api-status');
+        s.textContent = 'Offline'; s.className = 'offline';
+        document.getElementById('task-list').innerHTML = '<div class="empty"><span class="empty-icon">📡</span><p>API Unavailable</p><small>Start the server and refresh</small></div>';
+      }
+    }
+
+    async function addTask() {
+      const title = document.getElementById('input-title').value.trim();
+      const desc = document.getElementById('input-desc').value.trim();
+      if (!title) { showToast('Title is required', true); return; }
+      const btn = document.getElementById('btn-add');
+      btn.disabled = true; btn.textContent = '...';
+      try {
+        const res = await fetch(API + '/tasks', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, description: desc })
+        });
+        if (res.ok) {
+          document.getElementById('input-title').value = '';
+          document.getElementById('input-desc').value = '';
+          showToast('Task added!'); fetchTasks();
+        } else { const d = await res.json(); showToast(d.error || 'Error', true); }
+      } finally { btn.disabled = false; btn.textContent = '+ Add Task'; }
+    }
+
+    async function markDone(id) {
+      if ((await fetch(API + '/tasks/' + id + '/done', { method: 'PATCH' })).ok) { showToast('Task completed! 🎉'); fetchTasks(); }
+    }
+
+    async function deleteTask(id) {
+      const el = document.getElementById('task-' + id);
+      if (el) { el.style.transition = 'all 0.25s ease'; el.style.opacity = '0'; el.style.transform = 'translateX(20px)'; }
+      await new Promise(r => setTimeout(r, 240));
+      if ((await fetch(API + '/tasks/' + id, { method: 'DELETE' })).ok) { showToast('Task deleted'); fetchTasks(); }
+    }
+
+    function showToast(msg, isError = false) {
+      const t = document.getElementById('toast');
+      t.textContent = msg; t.className = 'toast show' + (isError ? ' error' : '');
+      clearTimeout(t._timer); t._timer = setTimeout(() => { t.className = 'toast'; }, 2800);
+    }
+
+    document.getElementById('btn-add').addEventListener('click', addTask);
+    document.getElementById('input-title').addEventListener('keydown', e => { if (e.key === 'Enter') addTask(); });
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active'); currentFilter = btn.dataset.filter; fetchTasks();
+      });
+    });
+
+    fetchTasks();
+  </script>
+</body>
+
+</html>
